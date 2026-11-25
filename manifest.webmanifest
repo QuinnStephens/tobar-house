@@ -1,0 +1,21 @@
+{
+  "name": "Tobar House",
+  "short_name": "Tobar",
+  "description": "Quinn's ideas and playable prototypes.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#16151d",
+  "theme_color": "#16151d",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Park an idea", "short_name": "New idea", "url": "/#/new" },
+    { "name": "Play prototypes", "short_name": "Play", "url": "/#/play" }
+  ]
+}

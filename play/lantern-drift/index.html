@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Lantern Drift</title>
+  <meta name="theme-color" content="#0d0c14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="icon" href="../../icons/favicon-32.png">
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0c14; overflow: hidden; touch-action: none; overscroll-behavior: none; }
+    canvas { display: block; width: 100vw; height: 100dvh; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script src="../back-to-house.js" data-home="top: 12px; right: 12px"></script>
+  <script>
+  // Lantern Drift: a tiny prototype for Tobar House, and an example of how prototypes are put together.
+  // Move: stick / d-pad / arrows / WASD, or drag anywhere. A / Space / tap starts. Start / P pauses.
+  // Select toggles full screen. Sparks keep the light burning; moths drink it. Last as long as you can.
+  (() => {
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    let W = 0, H = 0, S = 1;
+    function resize() {
+      const dpr = Math.min(devicePixelRatio || 1, 2);
+      W = innerWidth; H = innerHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      S = Math.min(W, H) / 600; // world scale
+    }
+    addEventListener('resize', resize);
+    resize();
+
+    const BEST_KEY = 'tobar:lantern-drift:best';
+    let best = 0;
+    try { best = Number(localStorage.getItem(BEST_KEY)) || 0; } catch {}
+
+    const rand = (a, b) => a + Math.random() * (b - a);
+    let state = 'title'; // title | play | paused | over
+    let lantern, sparks, moths, time, light, score, wind, flash;
+    const stars = Array.from({ length: 90 }, () => ({ x: Math.random(), y: Math.random(), r: Math.random() * 1.4 + 0.3, t: Math.random() * 6 }));
+
+    function reset() {
+      lantern = { x: W / 2, y: H / 2, vx: 0, vy: 0, sway: 0 };
+      sparks = []; moths = []; time = 0; light = 1; score = 0; wind = 0; flash = 0;
+    }
+    reset();
+
+    /* ---- Input ---- */
+    const keys = new Set();
+    let drag = null, padLabel = null;
+    addEventListener('keydown', (e) => {
+      keys.add(e.key.toLowerCase());
+      if (e.key === ' ' || e.key === 'Enter') { press(); e.preventDefault(); }
+      if (e.key === 'p' || e.key === 'P') pause();
+      if (e.key.startsWith('Arrow')) e.preventDefault();
+    });
+    addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+    canvas.addEventListener('pointerdown', (e) => {
+      padLabel = null;
+      if (state !== 'play') { press(); return; }
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, lx: lantern.x, ly: lantern.y };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      // Relative drag, so a finger never covers the lantern
+      lantern.tx = drag.lx + (e.clientX - drag.x) * 1.4;
+      lantern.ty = drag.ly + (e.clientY - drag.y) * 1.4;
+    });
+    const endDrag = (e) => { if (drag && e.pointerId === drag.id) { drag = null; lantern.tx = lantern.ty = undefined; } };
+    canvas.addEventListener('pointerup', endDrag);
+    canvas.addEventListener('pointercancel', endDrag);
+
+    function press() {
+      if (state === 'title' || state === 'over') { reset(); state = 'play'; }
+      else if (state === 'paused') state = 'play';
+    }
+    function pause() {
+      if (state === 'play') state = 'paused';
+      else if (state === 'paused') state = 'play';
+    }
+    addEventListener('blur', () => { if (state === 'play') state = 'paused'; });
+
+    const was = {};
+    function readPad() {
+      const pads = (navigator.getGamepads ? [...navigator.getGamepads()] : []).filter(Boolean);
+      let x = 0, y = 0;
+      const btn = (i) => pads.some((p) => p.buttons[i]?.pressed);
+      for (const p of pads) {
+        const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+        if (Math.abs(ax) > 0.15) x += ax;
+        if (Math.abs(ay) > 0.15) y += ay;
+        if (p.buttons[14]?.pressed) x -= 1;
+        if (p.buttons[15]?.pressed) x += 1;
+        if (p.buttons[12]?.pressed) y -= 1;
+        if (p.buttons[13]?.pressed) y += 1;
+        if (p.buttons.some((b) => b.pressed)) padLabel = /054c|playstation|dualsense|dualshock/i.test(p.id) ? '✕' : /057e|nintendo/i.test(p.id) ? 'B' : 'A';
+      }
+      const edge = (name, on) => { const fire = on && !was[name]; was[name] = on; return fire; };
+      if (edge('a', btn(0))) press();
+      if (edge('start', btn(9))) pause();
+      if (edge('select', btn(8) && !btn(9))) {
+        if (document.fullscreenElement) document.exitFullscreen?.(); else document.documentElement.requestFullscreen?.().catch(() => {});
+      }
+      return { x, y };
+    }
+
+    /* ---- Update ---- */
+    function update(dt) {
+      const pad = readPad();
+      if (state !== 'play') return;
+      time += dt;
+      wind = Math.sin(time * 0.35) * 40 + Math.sin(time * 1.3) * 18;
+      let ix = pad.x, iy = pad.y;
+      if (keys.has('arrowleft') || keys.has('a')) ix -= 1;
+      if (keys.has('arrowright') || keys.has('d')) ix += 1;
+      if (keys.has('arrowup') || keys.has('w')) iy -= 1;
+      if (keys.has('arrowdown') || keys.has('s')) iy += 1;
+      const len = Math.hypot(ix, iy);
+      if (len > 1) { ix /= len; iy /= len; }
+      const accel = 1500 * S;
+      if (lantern.tx !== undefined) {
+        lantern.vx += ((lantern.tx - lantern.x) * 14 - lantern.vx) * Math.min(1, dt * 8);
+        lantern.vy += ((lantern.ty - lantern.y) * 14 - lantern.vy) * Math.min(1, dt * 8);
+      } else {
+        lantern.vx += ix * accel * dt;
+        lantern.vy += iy * accel * dt;
+      }
+      lantern.vx += wind * S * dt * 2;
+      lantern.vx *= Math.pow(0.08, dt);
+      lantern.vy *= Math.pow(0.08, dt);
+      lantern.x = Math.max(20 * S, Math.min(W - 20 * S, lantern.x + lantern.vx * dt));
+      lantern.y = Math.max(20 * S, Math.min(H - 20 * S, lantern.y + lantern.vy * dt));
+      lantern.sway += (lantern.vx * 0.0015 - lantern.sway) * Math.min(1, dt * 6);
+
+      // The light burns down, faster as time goes on
+      light -= dt * (0.055 + time * 0.0009);
+      const glow = (40 + 140 * light) * S;
+
+      if (Math.random() < dt * (1.6 + time * 0.01)) sparks.push({ x: rand(0, W), y: H + 10, vy: -rand(40, 90) * S, t: 0 });
+      if (time > 4 && Math.random() < dt * (0.35 + time * 0.012)) {
+        const left = Math.random() < 0.5;
+        moths.push({ x: left ? -20 : W + 20, y: rand(H * 0.1, H * 0.9), vx: (left ? 1 : -1) * rand(50, 100) * S, t: rand(0, 6) });
+      }
+      for (const s of sparks) {
+        s.t += dt; s.y += s.vy * dt; s.x += (wind * 0.6 * S + Math.sin(s.t * 3) * 25 * S) * dt;
+        if (Math.hypot(s.x - lantern.x, s.y - lantern.y) < 24 * S) { s.dead = true; light = Math.min(1, light + 0.12); score += 1; flash = 0.25; }
+        if (s.y < -20) s.dead = true;
+      }
+      for (const m of moths) {
+        m.t += dt;
+        // Moths drift toward the light
+        const dx = lantern.x - m.x, dy = lantern.y - m.y, d = Math.hypot(dx, dy) || 1;
+        const pull = Math.min(1, glow * 2.2 / d) * 70 * S;
+        m.x += (m.vx + dx / d * pull) * dt;
+        m.y += (Math.sin(m.t * 5) * 40 * S + dy / d * pull) * dt;
+        if (d < 22 * S) { m.dead = true; light -= 0.22; flash = -0.35; }
+        if (m.x < -60 || m.x > W + 60) m.dead = true;
+      }
+      sparks = sparks.filter((s) => !s.dead);
+      moths = moths.filter((m) => !m.dead);
+      flash *= Math.pow(0.02, dt);
+      if (light <= 0) {
+        light = 0; state = 'over';
+        const total = Math.floor(time) + score * 5;
+        if (total > best) { best = total; try { localStorage.setItem(BEST_KEY, String(best)); } catch {} }
+      }
+    }
+
+    /* ---- Draw ---- */
+    function draw(now) {
+      ctx.fillStyle = '#0d0c14';
+      ctx.fillRect(0, 0, W, H);
+      for (const s of stars) {
+        ctx.globalAlpha = 0.35 + 0.35 * Math.sin(now / 900 + s.t);
+        ctx.fillStyle = '#cfd6ff';
+        ctx.beginPath(); ctx.arc(s.x * W, s.y * H * 0.8, s.r, 0, 7); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      // Hills
+      ctx.fillStyle = '#15131f';
+      ctx.beginPath(); ctx.moveTo(0, H);
+      for (let x = 0; x <= W; x += 20) ctx.lineTo(x, H * 0.82 + Math.sin(x / 140) * 18 * S + Math.sin(x / 53) * 6 * S);
+      ctx.lineTo(W, H); ctx.fill();
+
+      const glow = (40 + 140 * (state === 'title' ? 0.7 : light)) * S;
+      const g = ctx.createRadialGradient(lantern.x, lantern.y, 0, lantern.x, lantern.y, glow * 1.6);
+      g.addColorStop(0, `rgba(255, 196, 92, ${0.45 + Math.max(0, flash)})`);
+      g.addColorStop(1, 'rgba(255, 196, 92, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(lantern.x, lantern.y, glow * 1.6, 0, 7); ctx.fill();
+      if (flash < 0) { ctx.fillStyle = `rgba(80, 40, 120, ${-flash})`; ctx.fillRect(0, 0, W, H); }
+
+      for (const s of sparks) {
+        ctx.fillStyle = '#ffe9a8';
+        ctx.shadowColor = '#ffcf5a'; ctx.shadowBlur = 12;
+        ctx.beginPath(); ctx.arc(s.x, s.y, 3.2 * S + Math.sin(s.t * 9), 0, 7); ctx.fill();
+      }
+      ctx.shadowBlur = 0;
+      for (const m of moths) {
+        const flap = Math.abs(Math.sin(m.t * 14));
+        ctx.fillStyle = '#5b4f7a';
+        ctx.beginPath(); ctx.ellipse(m.x - 7 * S, m.y, 9 * S, (4 + 6 * flap) * S, -0.4, 0, 7); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(m.x + 7 * S, m.y, 9 * S, (4 + 6 * flap) * S, 0.4, 0, 7); ctx.fill();
+        ctx.fillStyle = '#2d2640';
+        ctx.beginPath(); ctx.ellipse(m.x, m.y, 3 * S, 8 * S, 0, 0, 7); ctx.fill();
+      }
+
+      // The lantern
+      ctx.save();
+      ctx.translate(lantern.x, lantern.y);
+      ctx.rotate(lantern.sway);
+      ctx.strokeStyle = '#3b3550'; ctx.lineWidth = 2 * S;
+      ctx.beginPath(); ctx.moveTo(0, -18 * S); ctx.lineTo(0, -30 * S); ctx.stroke();
+      ctx.fillStyle = '#2a2538';
+      ctx.fillRect(-11 * S, -18 * S, 22 * S, 5 * S);
+      ctx.fillRect(-11 * S, 13 * S, 22 * S, 5 * S);
+      ctx.fillStyle = `rgba(255, ${170 + 60 * light}, 90, ${0.35 + 0.65 * light})`;
+      ctx.fillRect(-9 * S, -13 * S, 18 * S, 26 * S);
+      ctx.fillStyle = `rgba(255, 245, 210, ${light})`;
+      ctx.beginPath(); ctx.ellipse(0, 2 * S, 3 * S, (5 + Math.sin(now / 90)) * S, 0, 0, 7); ctx.fill();
+      ctx.restore();
+
+      // Words
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#f2e9d8';
+      const big = Math.max(26, 44 * S), small = Math.max(15, 19 * S);
+      const go = padLabel ? `Press ${padLabel}` : matchMedia('(pointer: coarse)').matches ? 'Tap' : 'Press Space';
+      if (state === 'title') {
+        ctx.font = `700 ${big}px ui-serif, Georgia, serif`;
+        ctx.fillText('Lantern Drift', W / 2, H * 0.28);
+        ctx.font = `500 ${small}px system-ui, sans-serif`;
+        ctx.fillText('Catch the sparks to keep the light burning. Moths drink it.', W / 2, H * 0.28 + big);
+        ctx.fillText(`${go} to start`, W / 2, H * 0.72);
+        if (best) ctx.fillText(`Best: ${best}`, W / 2, H * 0.72 + small * 1.6);
+      } else {
+        ctx.font = `600 ${small}px system-ui, sans-serif`;
+        ctx.textAlign = 'left';
+        ctx.fillText(`${Math.floor(time)}s · ${score} sparks`, 16, H - 18);
+        ctx.fillStyle = 'rgba(255,255,255,0.15)';
+        ctx.fillRect(W / 2 - 80 * S, 22, 160 * S, 8);
+        ctx.fillStyle = light > 0.3 ? '#ffc45c' : '#ff7a5c';
+        ctx.fillRect(W / 2 - 80 * S, 22, 160 * S * Math.max(0, light), 8);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#f2e9d8';
+        if (state === 'paused') {
+          ctx.font = `700 ${big}px ui-serif, Georgia, serif`;
+          ctx.fillText('Paused', W / 2, H / 2);
+          ctx.font = `500 ${small}px system-ui, sans-serif`;
+          ctx.fillText(`${go} to carry on`, W / 2, H / 2 + big);
+        }
+        if (state === 'over') {
+          const total = Math.floor(time) + score * 5;
+          ctx.font = `700 ${big}px ui-serif, Georgia, serif`;
+          ctx.fillText('The light went out', W / 2, H * 0.36);
+          ctx.font = `500 ${small}px system-ui, sans-serif`;
+          ctx.fillText(`${Math.floor(time)} seconds and ${score} sparks: ${total} points${total >= best ? ' (best!)' : ` (best ${best})`}`, W / 2, H * 0.36 + big);
+          ctx.fillText(`${go} to light it again`, W / 2, H * 0.66);
+        }
+      }
+    }
+
+    let last = performance.now();
+    function frame(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      update(dt);
+      draw(now);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>

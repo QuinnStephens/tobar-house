@@ -1,0 +1,11 @@
+{
+  "prototypes": [
+    {
+      "slug": "lantern-drift",
+      "title": "Lantern Drift",
+      "tagline": "Keep a little lantern lit on a windy night. Catch sparks, dodge the moths.",
+      "added": "2026-11-25",
+      "updated": "2026-11-25"
+    }
+  ]
+}
