@@ -1,9 +1,9 @@
-"""Draws the app icons in icons/ (run by hand: python3 tools/make-icons.py; needs Pillow).
+"""Draws the app icons in public/icons/ (run by hand: python3 tools/make-icons.py; needs Pillow).
 A little house with an arched doorway and a lantern, amber on the app's night colour."""
 from pathlib import Path
 from PIL import Image, ImageDraw
 
-OUT = Path(__file__).resolve().parent.parent / "icons"
+OUT = Path(__file__).resolve().parent.parent / "public" / "icons"
 BG, FG, WATER = (22, 21, 29), (242, 184, 75), (92, 200, 184)
 
 
