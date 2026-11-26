@@ -1,4 +1,4 @@
-// The ideas, in a D1 database (bound to the Pages project as DB). The table makes itself the first time.
+// The ideas, in a D1 database (bound to the Worker as DB in wrangler.jsonc). The table makes itself the first time.
 // The app keeps a full copy on the device and syncs, so it works offline:
 //
 //   GET    /api/ideas                  every idea that isn't deleted, newest first
@@ -103,12 +103,12 @@ async function save(db, id, row, now) {
     .run();
 }
 
-export async function onRequest({ request, env, params }) {
+// path: what comes after /api/ideas/, split on / (empty for /api/ideas)
+export async function ideas(request, env, path) {
   const db = env.DB;
-  if (!db) return json({ error: 'not-set-up', message: 'Bind a D1 database to the Pages project as DB (see the README).' }, 503);
+  if (!db) return json({ error: 'not-set-up', message: 'Bind a D1 database to the Worker as DB (see wrangler.jsonc).' }, 503);
   await setUp(db);
   const url = new URL(request.url);
-  const path = params.path || [];
   const id = path.length ? clip(decodeURIComponent(path[0]), MAX.id) : '';
   const method = request.method;
   const now = new Date().toISOString();

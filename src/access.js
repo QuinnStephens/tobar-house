@@ -1,12 +1,12 @@
-// Every /api request has to come from Quinn. Cloudflare Access sits in front of the whole site and only lets
+// Every /api request has to come from Quinn (src/worker.js calls this first). Cloudflare Access sits in front of the whole site and only lets
 // Quinn in (signing in with GitHub, so a passkey / Face ID). Access passes each request on with a signed token
 // in the Cf-Access-Jwt-Assertion header, and this checks that token too, so the API stays shut even if the
 // Access app is ever switched off or a path is left out of it.
 //
-// Settings on the Pages project (see the README):
+// Variables on the Worker (see the README):
 //   ACCESS_TEAM_DOMAIN  e.g. "quinn.cloudflareaccess.com" (Zero Trust > Settings > Custom Pages shows the team name)
 //   ACCESS_AUD          the Access application's "Application Audience (AUD) Tag"
-// With neither set, the API only answers on localhost, for `wrangler pages dev`.
+// With neither set, the API only answers on localhost, for `wrangler dev`.
 
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), {
@@ -54,20 +54,15 @@ async function verify(token, env) {
   return { email: payload.email || '', service: payload.common_name || '' };
 }
 
-export async function onRequest(context) {
-  const { request, env } = context;
+// The signed-in person ({ email, service }), or a Response turning the request away
+export async function signedIn(request, env) {
   const host = new URL(request.url).hostname;
   if (!env.ACCESS_TEAM_DOMAIN || !env.ACCESS_AUD) {
-    if (host === 'localhost' || host === '127.0.0.1') {
-      context.data.user = { email: 'local', service: '' };
-      return context.next();
-    }
-    return json({ error: 'not-set-up', message: 'Set ACCESS_TEAM_DOMAIN and ACCESS_AUD on the Pages project (see the README).' }, 503);
+    if (host === 'localhost' || host === '127.0.0.1') return { email: 'local', service: '' };
+    return json({ error: 'not-set-up', message: 'Set ACCESS_TEAM_DOMAIN and ACCESS_AUD on the Worker (see the README).' }, 503);
   }
   const token = request.headers.get('cf-access-jwt-assertion') || '';
   let user = null;
   try { user = token ? await verify(token, env) : null; } catch (e) { return json({ error: 'certs', message: String(e) }, 502); }
-  if (!user) return json({ error: 'signed-out', message: 'Sign in again.' }, 401);
-  context.data.user = user;
-  return context.next();
+  return user || json({ error: 'signed-out', message: 'Sign in again.' }, 401);
 }
