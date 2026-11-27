@@ -1,0 +1,18 @@
+// Tobar House on Cloudflare Workers: static files from public/, and src/worker.js for /api/*.
+// "name" has to match the Worker's name in the Cloudflare dashboard.
+{
+  "name": "tobar-house",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  // The first deploy finds the database called tobar-ideas, or makes it if there isn't one.
+  // The table inside makes itself.
+  "d1_databases": [{ "binding": "DB", "database_name": "tobar-ideas" }],
+  // ACCESS_TEAM_DOMAIN and ACCESS_AUD are set in the dashboard (see the README); keep them on every deploy.
+  "keep_vars": true,
+  "observability": { "enabled": true }
+}
